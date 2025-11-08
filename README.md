@@ -1,364 +1,278 @@
-# CMBM Bartender Gateway
+# Bartender Gateway (Mixologist AI Service)
 
-**AI-powered cocktail assistant with intelligent CPU/GPU routing for the Cocktail Mixer Bartender Manager system.**
-
-## Overview
-
-The Bartender Gateway is the core AI service that powers the Mixologist conversational assistant. It provides:
-
-- **Tiered LLM Routing**: Intelligent routing to CPU or GPU Ollama instances based on family subscription tier
-- **Chat API**: RESTful HTTP API for conversational cocktail assistance
-- **MCP Integration**: Connects to Model Context Protocol server for conversation history and context
-- **Cost Optimization**: Routes free tier to cheap CPU hosting, premium tier to fast GPU hosting
+Express.js API gateway that connects the CMBM frontend to the local Ollama LLM with MCP context enrichment for intelligent cocktail assistance.
 
 ## Architecture
 
-### Service Boundaries
+```
+Frontend (SvelteKit)
+  ↓ HTTP POST /api/ai-user/chat/message
+nginx reverse proxy
+  ↓ proxy to ai-infrastructure:8000
+Bartender Gateway (Express.js) ← THIS SERVICE
+  ↓ Context enrichment via MCP Server
+MCP Server (port 3100)
+  ├─ MongoDB (conversation history, preferences)
+  ├─ Tools (check_inventory, find_recipes, etc.)
+  └─ Resources (inventory://, recipes://, preferences://)
+  ↓
+Bartender Gateway generates enriched prompt
+  ↓ HTTP POST /api/generate
+Ollama (port 11434)
+  ↓ Uses model
+cocktail-bartender:latest (Mistral 7B fine-tuned)
+```
 
-**What This Service Does:**
-- ✅ HTTP API for chat requests
-- ✅ Tiered routing (CPU vs GPU Ollama instances)
-- ✅ Subscription tier checking
-- ✅ Response generation and streaming
-- ✅ Cost tracking and analytics
+## Features
 
-**What This Service Does NOT Do:**
-- ❌ Conversation history storage (handled by MCP server)
-- ❌ User authentication (handled by main API)
-- ❌ Family management (handled by main API)
-- ❌ Recipe data (handled by main API)
-
-### Technology Stack
-
-- **Runtime**: Node.js + TypeScript (ES2022 modules)
-- **Framework**: Express.js
-- **LLM Integration**: Ollama (local models)
-- **AI Models**: Llama 3.2 8B fine-tuned (cocktail-bartender:latest)
-- **Protocol**: HTTP/REST + WebSocket (future)
-- **Deployment**: Docker container on internal network
+- **MCP Integration**: Context-aware responses using Model Context Protocol
+  - Conversation history retrieval and storage
+  - User preferences integration
+  - Family inventory access
+  - Recipe lookup and recommendations
+- **Chat Interface**: RESTful API for conversational AI interactions
+- **Health Monitoring**: Ollama and MCP server connectivity checks
+- **LLM Info**: Provides model information to main app system controller
+- **Context Enrichment**: Automatic context building from conversation history, preferences, and inventory
+- **Smart Query Detection**: Automatically detects inventory and recipe queries for tool calls
+- **Error Handling**: Comprehensive error handling for LLM timeouts, connection issues
+- **CORS Support**: Configurable cross-origin resource sharing
+- **Docker Ready**: Multi-stage Dockerfile with health checks
 
 ## API Endpoints
 
-### Chat API
+### Chat
+- `POST /api/chat/message` - Send chat message to Mixologist AI with MCP context enrichment
+- `GET /api/chat/sessions` - Get chat sessions for a family (TODO: database integration)
 
-```http
-POST /api/chat/send
-Content-Type: application/json
-Authorization: Bearer {token}
-
-{
-  "familyId": "string",
-  "userId": "string",
-  "message": "string",
-  "sessionId": "string?",
-  "measurementSystem": "imperial" | "metric" | "both"
-}
-
-Response:
-{
-  "success": true,
-  "message": "AI response text",
-  "sessionId": "session_123",
-  "metadata": {
-    "tier": "free" | "premium",
-    "instanceType": "cpu" | "gpu",
-    "estimatedCost": 0.00001
-  }
-}
-```
-
-### Health Check
-
-```http
-GET /health
-
-Response:
-{
-  "status": "healthy",
-  "services": {
-    "ollama": { "healthy": true, "model": "cocktail-bartender:latest" },
-    "mcp": { "healthy": true }
-  }
-}
-```
-
-### LLM Information
-
-```http
-GET /api/llm/info
-
-Response:
-{
-  "displayName": "Mixologist",
-  "version": "November 2025",
-  "status": "available",
-  "capabilities": ["chat", "cocktail-recommendations", "recipe-analysis", "party-planning"],
-  "analytics": {
-    "provider": "ollama",
-    "modelName": "cocktail-bartender:latest",
-    "lastHealthCheck": "2025-11-07T12:00:00Z"
-  }
-}
-```
-
-## Tiered Routing System
-
-### How It Works
-
-1. **Request arrives** with familyId
-2. **Subscription check**: Call `/families/{id}/subscription` on main API
-3. **Route selection**:
-   - Free tier → CPU instance (90s timeout, $0.00001/request)
-   - Premium tier + GPU available → GPU instance (30s timeout, $0.0001/request)
-   - GPU failure → Fallback to CPU
-4. **Response generated** with metadata about routing and cost
-
-### Instance Configuration
-
-**CPU Instance (Always Available)**
-```env
-OLLAMA_CPU_BASE_URL=http://ollama-cpu:11434
-OLLAMA_MODEL=cocktail-bartender:latest
-```
-
-**GPU Instance (On-Demand)**
-```env
-OLLAMA_GPU_BASE_URL=http://ollama-gpu:11434  # Optional
-OLLAMA_MODEL=cocktail-bartender:latest
-```
+### Monitoring
+- `GET /health` - Service health check (includes Ollama and MCP status)
+- `GET /api/ollama/health` - Ollama connectivity and model check
+- `GET /api/llm/info` - LLM model information (for system controller)
 
 ## Environment Variables
 
 ```bash
-# Service Configuration
+# Server
 NODE_ENV=development|production
 PORT=8000
 
-# Main App Integration
-MAIN_APP_URL=http://cmbm-main:3000
-
-# Ollama Instances
-OLLAMA_CPU_BASE_URL=http://ollama-cpu:11434
-OLLAMA_GPU_BASE_URL=http://ollama-gpu:11434  # Optional
+# Ollama
+OLLAMA_BASE_URL=http://localhost:11434  # or http://ollama:11434 in Docker
 OLLAMA_MODEL=cocktail-bartender:latest
+OLLAMA_TIMEOUT=30000
 
-# MCP Server Integration
-MCP_SERVER_URL=http://cmbm-mcp-server:8001
+# MCP Server
+MCP_SERVER_URL=http://localhost:3100  # or http://mcp-server:3100 in Docker
+
+# CORS
+CORS_ORIGIN=*  # or specific origins
 ```
 
 ## Development
-
-### Prerequisites
-
-- Node.js 18+
-- Docker and Docker Compose
-- Access to Ollama instance (CPU or GPU)
-
-### Local Development
 
 ```bash
 # Install dependencies
 npm install
 
-# Development mode with hot reload
+# Start development server (with hot reload)
 npm run dev
 
 # Build TypeScript
 npm run build
 
-# Run production build
+# Start production server
 npm start
 
-# Run tests
-npm test
-
-# Type checking
-npm run type-check
+# Lint code
+npm run lint
 ```
 
-### Docker Development
+## Testing Locally
+
+### Prerequisites
+1. Ollama installed and running: `ollama serve`
+2. Model loaded: `ollama pull cocktail-bartender:latest`
+3. MCP Server running on port 3100
+4. MongoDB running for MCP storage
+
+### Quick Integration Test
+```bash
+# Run comprehensive integration test
+./test-integration.sh
+```
+
+### Manual Testing
+```bash
+# Start development server
+npm run dev
+
+# In another terminal, test health check
+curl http://localhost:8000/health
+
+# Test Ollama health
+curl http://localhost:8000/api/ollama/health
+
+# Test chat message (with MCP context enrichment)
+curl -X POST http://localhost:8000/api/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "familyId": "test-family-id",
+    "userId": "test-user-id",
+    "message": "What cocktails can I make with vodka?"
+  }'
+
+# Test with session continuity
+curl -X POST http://localhost:8000/api/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "familyId": "test-family-id",
+    "userId": "test-user-id",
+    "sessionId": "session-123",
+    "message": "I love margaritas"
+  }'
+
+curl -X POST http://localhost:8000/api/chat/message \
+  -H "Content-Type: application/json" \
+  -d '{
+    "familyId": "test-family-id",
+    "userId": "test-user-id",
+    "sessionId": "session-123",
+    "message": "Suggest a variation"
+  }'
+```
+
+## Docker Deployment
 
 ```bash
 # Build image
-docker build -t cmbm-bartender-gateway:dev .
+docker build -t cmbm/bartender-gateway:latest .
 
 # Run container
-docker run -p 8000:8000 \
-  -e OLLAMA_CPU_BASE_URL=http://host.docker.internal:11434 \
-  -e MAIN_APP_URL=http://cmbm-main:3000 \
-  cmbm-bartender-gateway:dev
+docker run -d \
+  --name bartender-gateway \
+  -p 8000:8000 \
+  -e OLLAMA_BASE_URL=http://ollama:11434 \
+  -e OLLAMA_MODEL=cocktail-bartender:latest \
+  --network cmbm-network \
+  cmbm/bartender-gateway:latest
 ```
 
-## Deployment
+## Integration with CMBM Ecosystem
 
-### Docker Compose (Development)
+### Main App Integration
+The main app's `ai.service.ts` proxies AI requests to this service at `http://ai-infrastructure:8000`.
 
-```yaml
-services:
-  cmbm-bartender-gateway:
-    build: ../cmbm-bartender-gateway
-    image: cmbm-bartender-gateway:latest
-    ports:
-      - "8000:8000"
-    environment:
-      NODE_ENV: development
-      MAIN_APP_URL: http://cmbm-main:3000
-      OLLAMA_CPU_BASE_URL: http://ollama-cpu:11434
-    networks:
-      - cmbm_internal
-      - cmbm_public
+### Frontend Integration
+The frontend's Mixologist chat component sends messages to:
+```
+${API_BASE_URL}/ai-user/chat/message
 ```
 
-### Production Deployment
+nginx proxies this to bartender-gateway at `/api/chat/message`.
 
-**Network Architecture:**
-- **Internal Network**: Service-to-service communication (HTTP, gRPC future)
-- **Public Network**: User-facing traffic through nginx (HTTPS)
+### Ollama Integration
+Bartender Gateway connects to Ollama at `OLLAMA_BASE_URL` (default: `http://ollama:11434`).
 
-**Scaling Considerations:**
-- **CPU Instance**: Single instance sufficient for free tier users
-- **GPU Instance**: Provision when first premium subscription created
-- **Horizontal Scaling**: Add more bartender-gateway instances behind load balancer
+## File Structure
 
-### Kubernetes/K3s Readiness
-
-This service is designed for container orchestration:
-
-```yaml
-# k8s/deployment.yaml
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: cmbm-bartender-gateway
-spec:
-  replicas: 2
-  selector:
-    matchLabels:
-      app: cmbm-bartender-gateway
-  template:
-    metadata:
-      labels:
-        app: cmbm-bartender-gateway
-    spec:
-      containers:
-      - name: gateway
-        image: cmbm-bartender-gateway:latest
-        ports:
-        - containerPort: 8000
-        env:
-        - name: MAIN_APP_URL
-          value: "http://cmbm-main-service:3000"
+```
+bartender-gateway/
+├── src/
+│   ├── controllers/
+│   │   └── chat.controller.ts       # Express route handlers with MCP integration
+│   ├── services/
+│   │   ├── ollama-client.ts         # Ollama API client
+│   │   └── mcp-client.ts            # MCP Server client (NEW)
+│   └── server.ts                    # Express app
+├── package.json                     # Dependencies
+├── tsconfig.json                    # TypeScript config
+├── Dockerfile                       # Multi-stage Docker build
+├── .dockerignore                    # Docker build optimization
+├── .env.development                 # Local development config
+├── .env.production                  # Production config
+├── .env.example                     # Example environment variables
+└── test-integration.sh              # Integration test script (NEW)
 ```
 
-## Monitoring & Observability
+## MCP Integration Details
 
-### Health Checks
+### MCP Client Features
 
-```bash
-# Docker health check
-curl http://localhost:8000/health
+The `MCPClient` service provides:
 
-# Kubernetes liveness probe
-livenessProbe:
-  httpGet:
-    path: /health
-    port: 8000
-  initialDelaySeconds: 30
-  periodSeconds: 10
+1. **Tool Calls**:
+   - `check_inventory(familyId, ingredient)` - Check ingredient availability
+   - `find_recipes(familyId, ingredients, category)` - Find matching recipes
+   - `store_preference(familyId, userId, type, value)` - Store user preferences
+
+2. **Resource Access**:
+   - `inventory://family/{familyId}/ingredients` - Family inventory
+   - `preferences://user/{userId}@{familyId}` - User preferences
+   - `conversations://session/{sessionId}@{familyId}` - Conversation history
+
+3. **Context Building**:
+   - Automatic retrieval of conversation history (last 5 messages)
+   - User preference integration (favorite drinks, dietary restrictions)
+   - Family inventory context (available ingredients)
+
+### Query Detection
+
+The chat controller automatically detects:
+
+- **Inventory Queries**: "Do I have vodka?", "Is there any rum in stock?"
+- **Recipe Queries**: "What cocktails can I make?", "Suggest a drink with gin"
+
+When detected, it calls appropriate MCP tools for context enrichment before sending to Ollama.
+
+### Response Flow
+
+```
+1. User sends message
+2. Store user message in MCP (conversation history)
+3. Build enriched context:
+   - Retrieve conversation history from MCP
+   - Get user preferences from MCP
+   - Get family inventory from MCP
+   - Call MCP tools if query detected (inventory check, recipe lookup)
+4. Send enriched prompt to Ollama
+5. Store assistant response in MCP
+6. Return response to user
 ```
 
-### Metrics
+## TypeScript Configuration
 
-- Request count by tier (free/premium)
-- Response time by instance (CPU/GPU)
-- Cost per request
-- Ollama health status
-- MCP connection status
+- **Target**: ES2022
+- **Module**: ESNext with bundler resolution
+- **Strict Mode**: Enabled
+- **Output**: `./dist` directory
 
-### Logging
+## TODO
 
-```typescript
-// Structured logging format
-{
-  "timestamp": "2025-11-07T12:00:00Z",
-  "level": "info",
-  "service": "bartender-gateway",
-  "familyId": "family_123",
-  "tier": "premium",
-  "instanceType": "gpu",
-  "duration": 2341,
-  "cost": 0.0001
-}
-```
+- [x] Database integration for conversation history (via MCP Server)
+- [x] Fetch inventory context from main app for better recommendations (via MCP)
+- [x] Session management and persistence (via MCP)
+- [ ] Rate limiting for API endpoints
+- [ ] Request/response caching
+- [ ] Metrics collection (Prometheus)
+- [ ] Integration tests with Jest
+- [ ] Load testing with k6
 
-## Testing
+## Dependencies
 
-### Unit Tests
+### Production
+- `express` - Web framework
+- `axios` - HTTP client for Ollama and MCP API
+- `cors` - Cross-origin resource sharing
+- `dotenv` - Environment configuration
 
-```bash
-npm test
-```
-
-### Integration Tests
-
-```bash
-# Start dependencies
-docker compose up -d ollama-cpu cmbm-main
-
-# Run integration tests
-npm run test:integration
-```
-
-### Load Testing
-
-```bash
-# Test CPU tier throughput
-ab -n 1000 -c 10 -p request.json -T application/json http://localhost:8000/api/chat/send
-
-# Test GPU tier latency
-wrk -t4 -c100 -d30s http://localhost:8000/api/chat/send
-```
-
-## Security
-
-### Network Isolation
-
-- **Public Endpoint**: `/api/chat/send` (authenticated via JWT)
-- **Internal Endpoint**: `/api/llm/info` (public for health checks)
-- **Subscription Check**: Internal network only (no external access)
-
-### Authentication
-
-- JWT tokens validated by main API
-- Bartender-gateway trusts tokens, does not validate
-- Future: Service-to-service API keys
-
-### Data Protection
-
-- No PII stored in this service
-- Conversation history stored in MCP server only
-- Request/response logged without sensitive data
-
-## Contributing
-
-See main CMBM documentation for contribution guidelines:
-- [Development Workflow](https://github.com/brecko/cmbm-docs/blob/main/DEVELOPMENT_WORKFLOW.md)
-- [Issue Tracking](https://github.com/brecko/cmbm-docs/issues)
+### Development
+- `typescript` - Type safety
+- `tsx` - TypeScript execution
+- `nodemon` - Development hot reload
+- `@types/*` - TypeScript type definitions
+- `eslint` - Code linting
 
 ## License
 
-Proprietary - See [LICENSE](LICENSE) file for details.
-
-## Related Repositories
-
-- **[cmbm-main](https://github.com/brecko/cmbm-main)**: Core NestJS API
-- **[cmbm-mcp-server](https://github.com/brecko/cmbm-mcp-server)**: Conversation context management
-- **[cmbm-frontend](https://github.com/brecko/cmbm-frontend)**: SvelteKit UI
-- **[cmbm-deployment](https://github.com/brecko/cmbm-deployment)**: Docker orchestration
-- **[cmbm-docs](https://github.com/brecko/cmbm-docs)**: Architecture documentation
-
----
-
-**Status**: Production-ready, actively maintained  
-**Version**: 1.0.0  
-**Last Updated**: November 2025
+MIT
