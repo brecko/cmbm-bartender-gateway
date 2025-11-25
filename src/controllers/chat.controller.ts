@@ -1,21 +1,21 @@
-import { Request, Response } from 'express';
-import { OllamaClient } from '../services/ollama-client.js';
-import { TieredOllamaRouter } from '../services/tiered-ollama-router.js';
-import { MCPClient } from '../services/mcp-client.js';
-import axios from 'axios';
+import { Request, Response } from "express";
+import { OllamaClient } from "../services/ollama-client.js";
+import { TieredOllamaRouter } from "../services/tiered-ollama-router.js";
+import { MCPClient } from "../services/mcp-client.js";
+import axios from "axios";
 
 const ollamaClient = new OllamaClient();
 const tieredRouter = new TieredOllamaRouter();
 const mcpClient = new MCPClient();
 
-const MAIN_APP_URL = process.env.MAIN_APP_URL || 'http://cmbm-main:3000';
+const MAIN_APP_URL = process.env.MAIN_APP_URL || "http://cmbm-main:3000";
 
 interface ChatRequest {
   familyId: string;
   userId: string;
   message: string;
   sessionId?: string;
-  measurementSystem: 'imperial' | 'metric' | 'both'; // REQUIRED for localized responses
+  measurementSystem: "imperial" | "metric" | "both"; // REQUIRED for localized responses
 }
 
 export class ChatController {
@@ -24,22 +24,32 @@ export class ChatController {
    */
   async sendMessage(req: Request, res: Response): Promise<void> {
     try {
-      const { familyId, userId, message, sessionId, measurementSystem }: ChatRequest = req.body;
+      const {
+        familyId,
+        userId,
+        message,
+        sessionId,
+        measurementSystem,
+      }: ChatRequest = req.body;
 
       // Validate required fields
       if (!familyId || !userId || !message) {
         res.status(400).json({
           success: false,
-          message: 'Missing required fields: familyId, userId, message',
+          message: "Missing required fields: familyId, userId, message",
         });
         return;
       }
 
       // Validate measurementSystem is provided and valid
-      if (!measurementSystem || !['imperial', 'metric', 'both'].includes(measurementSystem)) {
+      if (
+        !measurementSystem ||
+        !["imperial", "metric", "both"].includes(measurementSystem)
+      ) {
         res.status(400).json({
           success: false,
-          message: 'Missing or invalid measurementSystem. Must be one of: imperial, metric, both',
+          message:
+            "Missing or invalid measurementSystem. Must be one of: imperial, metric, both",
         });
         return;
       }
@@ -52,26 +62,35 @@ export class ChatController {
         familyId,
         userId,
         sessionId: activeSessionId,
-        role: 'user',
+        role: "user",
         content: message,
       });
 
       // Build enriched context from MCP (conversation history, preferences, inventory)
-      const mcpContext = await mcpClient.buildContext(familyId, userId, activeSessionId);
+      const mcpContext = await mcpClient.buildContext(
+        familyId,
+        userId,
+        activeSessionId
+      );
 
       // Detect if question requires inventory or recipe lookup
       const needsInventoryCheck = this.detectInventoryQuery(message);
       const needsRecipeLookup = this.detectRecipeQuery(message);
 
-      let additionalContext = '';
+      let additionalContext = "";
 
       // Call MCP tools if needed for additional context
       if (needsInventoryCheck) {
         const ingredient = this.extractIngredient(message);
         if (ingredient) {
-          const inventoryResult = await mcpClient.checkInventory(familyId, ingredient);
+          const inventoryResult = await mcpClient.checkInventory(
+            familyId,
+            ingredient
+          );
           if (inventoryResult && !inventoryResult.message) {
-            additionalContext += `\nInventory Check: ${JSON.stringify(inventoryResult)}`;
+            additionalContext += `\nInventory Check: ${JSON.stringify(
+              inventoryResult
+            )}`;
           }
         }
       }
@@ -80,19 +99,25 @@ export class ChatController {
         const ingredients = this.extractIngredients(message);
         const recipeResult = await mcpClient.findRecipes(familyId, ingredients);
         if (recipeResult && recipeResult.recipes) {
-            additionalContext += `\nAvailable Recipes: ${JSON.stringify(recipeResult)}`;
+          additionalContext += `\nAvailable Recipes: ${JSON.stringify(
+            recipeResult
+          )}`;
         }
       }
 
       // Combine all context
-      const fullContext = [mcpContext, additionalContext].filter((c) => c).join('\n\n');
+      const fullContext = [mcpContext, additionalContext]
+        .filter((c) => c)
+        .join("\n\n");
 
       // Fetch family subscription tier from main app
       const subscriptionTier = await this.getFamilySubscriptionTier(familyId);
 
       // Generate response with Ollama using tiered routing (measurement system is now required)
-      console.log(`[Chat] Generating response for user ${userId} in family ${familyId} (tier: ${subscriptionTier.tier}, locale: ${measurementSystem})`);
-      
+      console.log(
+        `[Chat] Generating response for user ${userId} in family ${familyId} (tier: ${subscriptionTier.tier}, locale: ${measurementSystem})`
+      );
+
       const result = await tieredRouter.generate(
         message,
         familyId,
@@ -101,14 +126,18 @@ export class ChatController {
         measurementSystem
       );
 
-      console.log(`[Chat] Response generated via ${result.instanceType.toUpperCase()} (cost: $${result.estimatedCost.toFixed(6)})`);
+      console.log(
+        `[Chat] Response generated via ${result.instanceType.toUpperCase()} (cost: $${result.estimatedCost.toFixed(
+          6
+        )})`
+      );
 
       // Store assistant response in MCP
       await mcpClient.storeMessage({
         familyId,
         userId,
         sessionId: activeSessionId,
-        role: 'assistant',
+        role: "assistant",
         content: result.response,
       });
 
@@ -117,7 +146,7 @@ export class ChatController {
         message: result.response,
         sessionId: activeSessionId,
         conversationId: activeSessionId,
-        context: fullContext ? 'enriched' : 'basic',
+        context: fullContext ? "enriched" : "basic",
         metadata: {
           tier: subscriptionTier.tier,
           instanceType: result.instanceType,
@@ -125,12 +154,13 @@ export class ChatController {
         },
       });
     } catch (error) {
-      console.error('[Chat] Error:', error);
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      
+      console.error("[Chat] Error:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Unknown error";
+
       res.status(500).json({
         success: false,
-        message: 'Failed to process chat message',
+        message: "Failed to process chat message",
         error: errorMessage,
       });
     }
@@ -146,7 +176,7 @@ export class ChatController {
       if (!familyId) {
         res.status(400).json({
           success: false,
-          message: 'Missing required parameter: familyId',
+          message: "Missing required parameter: familyId",
         });
         return;
       }
@@ -158,10 +188,10 @@ export class ChatController {
         sessions: [],
       });
     } catch (error) {
-      console.error('[Sessions] Error:', error);
+      console.error("[Sessions] Error:", error);
       res.status(500).json({
         success: false,
-        message: 'Failed to fetch chat sessions',
+        message: "Failed to fetch chat sessions",
       });
     }
   }
@@ -178,7 +208,7 @@ export class ChatController {
 
       if (!allHealthy) {
         res.status(503).json({
-          status: 'unhealthy',
+          status: "unhealthy",
           services: {
             ollama: {
               healthy: ollamaHealth.healthy,
@@ -196,7 +226,7 @@ export class ChatController {
       }
 
       res.json({
-        status: 'healthy',
+        status: "healthy",
         services: {
           ollama: {
             healthy: true,
@@ -210,8 +240,8 @@ export class ChatController {
       });
     } catch (error) {
       res.status(503).json({
-        status: 'unhealthy',
-        error: error instanceof Error ? error.message : 'Unknown error',
+        status: "unhealthy",
+        error: error instanceof Error ? error.message : "Unknown error",
         timestamp: new Date().toISOString(),
       });
     }
@@ -225,43 +255,63 @@ export class ChatController {
     try {
       const health = await ollamaClient.healthCheck();
       const modelInfo = await ollamaClient.getModelInfo();
-      
+
       // Format version as human-readable date (e.g., "November 2025")
       const buildDate = new Date();
-      const versionDate = buildDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+      const versionDate = buildDate.toLocaleDateString("en-US", {
+        month: "long",
+        year: "numeric",
+      });
 
       res.json({
         // User-facing information (displayed in frontend)
-        displayName: 'Mixologist',
+        displayName: "Mixologist",
         version: versionDate,
-        status: health.healthy ? 'available' : 'unavailable',
-        capabilities: ['chat', 'cocktail-recommendations', 'recipe-analysis', 'party-planning'],
-        
+        status: health.healthy ? "available" : "unavailable",
+        capabilities: [
+          "chat",
+          "cocktail-recommendations",
+          "recipe-analysis",
+          "party-planning",
+        ],
+
+        // User-friendly changelog (quarterly updates)
+        userFriendlyChangelog: {
+          title: "Your Mixologist got smarter!",
+          description: "Enhanced cocktail knowledge and conversation abilities",
+          features: [
+            "Now knows 200+ new cocktail recipes from around the world",
+            "Better at suggesting drinks based on your mood and occasion",
+            "Improved party planning tips and serving size recommendations",
+            "More natural conversations about flavor profiles and ingredients",
+          ],
+        },
+
         // Backend analytics information (for monitoring/debugging)
         analytics: {
-          provider: 'ollama',
-          providerType: 'local',
-          modelName: health.model || 'cocktail-bartender:latest',
-          modelSize: modelInfo?.details?.parameter_size || 'unknown',
-          quantization: modelInfo?.details?.quantization_level || 'unknown',
-          responseTime: modelInfo?.details?.family || 'llama',
+          provider: "ollama",
+          providerType: "local",
+          modelName: health.model || "cocktail-bartender:latest",
+          modelSize: modelInfo?.details?.parameter_size || "unknown",
+          quantization: modelInfo?.details?.quantization_level || "unknown",
+          responseTime: modelInfo?.details?.family || "llama",
           lastHealthCheck: new Date().toISOString(),
           uptime: process.uptime(),
           memoryUsage: process.memoryUsage(),
         },
-        
+
         lastUpdate: new Date().toISOString(),
       });
     } catch (error) {
       res.status(503).json({
-        displayName: 'Mixologist',
-        version: 'Unavailable',
-        status: 'unavailable',
+        displayName: "Mixologist",
+        version: "Unavailable",
+        status: "unavailable",
         capabilities: [],
         analytics: {
-          provider: 'ollama',
-          providerType: 'local',
-          error: error instanceof Error ? error.message : 'Unknown error',
+          provider: "ollama",
+          providerType: "local",
+          error: error instanceof Error ? error.message : "Unknown error",
         },
         lastUpdate: new Date().toISOString(),
       });
@@ -274,30 +324,35 @@ export class ChatController {
   private async getInventoryContext(familyId: string): Promise<string> {
     // TODO: Fetch from main app API
     // For now, return empty context
-    return '';
+    return "";
   }
 
   /**
    * Get family subscription tier from main app
    */
   private async getFamilySubscriptionTier(familyId: string): Promise<{
-    tier: 'free' | 'premium';
+    tier: "free" | "premium";
     subscriptionActive: boolean;
   }> {
     try {
-      const response = await axios.get(`${MAIN_APP_URL}/v1/api/cmbm-main/families/${familyId}/subscription`, {
-        timeout: 5000,
-      });
+      const response = await axios.get(
+        `${MAIN_APP_URL}/v1/api/cmbm-main/families/${familyId}/subscription`,
+        {
+          timeout: 5000,
+        }
+      );
 
       return {
-        tier: response.data.subscriptionTier || 'free',
+        tier: response.data.subscriptionTier || "free",
         subscriptionActive: response.data.subscriptionActive !== false,
       };
     } catch (error) {
-      console.warn(`[Chat] Failed to fetch subscription tier for family ${familyId}, defaulting to free tier`);
+      console.warn(
+        `[Chat] Failed to fetch subscription tier for family ${familyId}, defaulting to free tier`
+      );
       // Default to free tier on error
       return {
-        tier: 'free',
+        tier: "free",
         subscriptionActive: true,
       };
     }
@@ -315,15 +370,15 @@ export class ChatController {
    */
   private detectInventoryQuery(message: string): boolean {
     const inventoryKeywords = [
-      'do i have',
-      'do we have',
-      'is there',
-      'check inventory',
-      'check stock',
-      'in stock',
-      'available',
-      'how much',
-      'enough',
+      "do i have",
+      "do we have",
+      "is there",
+      "check inventory",
+      "check stock",
+      "in stock",
+      "available",
+      "how much",
+      "enough",
     ];
     const lowerMessage = message.toLowerCase();
     return inventoryKeywords.some((keyword) => lowerMessage.includes(keyword));
@@ -334,14 +389,14 @@ export class ChatController {
    */
   private detectRecipeQuery(message: string): boolean {
     const recipeKeywords = [
-      'recipe',
-      'cocktail',
-      'drink',
-      'make',
-      'mix',
-      'what can i make',
-      'suggest',
-      'recommend',
+      "recipe",
+      "cocktail",
+      "drink",
+      "make",
+      "mix",
+      "what can i make",
+      "suggest",
+      "recommend",
     ];
     const lowerMessage = message.toLowerCase();
     return recipeKeywords.some((keyword) => lowerMessage.includes(keyword));
@@ -375,19 +430,19 @@ export class ChatController {
     // Extract words that might be ingredients (simple approach)
     const words = message.toLowerCase().split(/\s+/);
     const commonWords = new Set([
-      'what',
-      'can',
-      'i',
-      'make',
-      'with',
-      'using',
-      'have',
-      'got',
-      'the',
-      'a',
-      'an',
-      'and',
-      'or',
+      "what",
+      "can",
+      "i",
+      "make",
+      "with",
+      "using",
+      "have",
+      "got",
+      "the",
+      "a",
+      "an",
+      "and",
+      "or",
     ]);
 
     return words.filter((word) => word.length > 3 && !commonWords.has(word));
