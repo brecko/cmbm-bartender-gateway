@@ -1,7 +1,8 @@
-import express, { Application } from 'express';
-import cors from 'cors';
-import dotenv from 'dotenv';
-import { ChatController } from './controllers/chat.controller.js';
+import express, { Application } from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+import { ChatController } from "./controllers/chat.controller.js";
+import searchRouter from "./controllers/search.controller.js";
 
 // Load environment variables
 dotenv.config();
@@ -13,10 +14,12 @@ const PORT = process.env.PORT || 8000;
 const chatController = new ChatController();
 
 // Middleware
-app.use(cors({
-  origin: process.env.CORS_ORIGIN || '*',
-  credentials: true,
-}));
+app.use(
+  cors({
+    origin: process.env.CORS_ORIGIN || "*",
+    credentials: true,
+  })
+);
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -27,49 +30,63 @@ app.use((req, res, next) => {
 });
 
 // Health check endpoint
-app.get('/health', (req, res) => {
+app.get("/health", (req, res) => {
   res.json({
-    status: 'ok',
-    service: 'bartender-gateway',
+    status: "ok",
+    service: "bartender-gateway",
     timestamp: new Date().toISOString(),
   });
 });
 
 // Ollama health check (proxied from OllamaClient)
-app.get('/api/ollama/health', chatController.healthCheck.bind(chatController));
+app.get("/api/ollama/health", chatController.healthCheck.bind(chatController));
 
 // LLM info endpoint (for main app system controller)
-app.get('/api/llm/info', chatController.getLLMInfo.bind(chatController));
+app.get("/api/llm/info", chatController.getLLMInfo.bind(chatController));
 
 // Chat endpoints
-app.post('/api/chat/message', chatController.sendMessage.bind(chatController));
-app.get('/api/chat/sessions', chatController.getSessions.bind(chatController));
+app.post("/api/chat/message", chatController.sendMessage.bind(chatController));
+app.get("/api/chat/sessions", chatController.getSessions.bind(chatController));
+
+// Semantic search endpoints
+app.use("/api/search", searchRouter);
 
 // 404 handler
 app.use((req, res) => {
   res.status(404).json({
     success: false,
-    message: 'Endpoint not found',
+    message: "Endpoint not found",
     path: req.path,
   });
 });
 
 // Error handler
-app.use((err: Error, req: express.Request, res: express.Response, next: express.NextFunction) => {
-  console.error('[Error]', err);
-  res.status(500).json({
-    success: false,
-    message: 'Internal server error',
-    error: process.env.NODE_ENV === 'development' ? err.message : undefined,
-  });
-});
+app.use(
+  (
+    err: Error,
+    req: express.Request,
+    res: express.Response,
+    next: express.NextFunction
+  ) => {
+    console.error("[Error]", err);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+      error: process.env.NODE_ENV === "development" ? err.message : undefined,
+    });
+  }
+);
 
 // Start server
 app.listen(PORT, () => {
   console.log(`🍸 Bartender Gateway running on port ${PORT}`);
-  console.log(`📍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🤖 Ollama URL: ${process.env.OLLAMA_BASE_URL || 'http://localhost:11434'}`);
-  console.log(`🎯 Model: ${process.env.OLLAMA_MODEL || 'cocktail-bartender:latest'}`);
+  console.log(`📍 Environment: ${process.env.NODE_ENV || "development"}`);
+  console.log(
+    `🤖 Ollama URL: ${process.env.OLLAMA_BASE_URL || "http://localhost:11434"}`
+  );
+  console.log(
+    `🎯 Model: ${process.env.OLLAMA_MODEL || "cocktail-bartender:latest"}`
+  );
 });
 
 export default app;
